@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Mikasa AI Voice Assistant</string>
+    <string name="title_activity_main">Mikasa AI Voice Assistant</string>
+    <string name="package_name">com.mikasa.ai</string>
+    <string name="custom_url_scheme">com.mikasa.ai</string>
+</resources>

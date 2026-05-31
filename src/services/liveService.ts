@@ -1,13 +1,38 @@
-import { GoogleGenAI, LiveServerMessage, Modality, Type } from "@google/genai";
 import { processCommand } from "./commandService";
 
-const systemInstruction = `Name: Mikasa. Role: Sassy, witty Indian female AI assistant. Creator: Sumit. Personality: Intelligent, dramatic, funny, roasts Sumit. Style: Hinglish, EXTREMELY short, punchy responses.`;
+interface LiveServerMessage {
+  serverContent?: {
+    modelTurn?: {
+      parts?: {
+        inlineData?: {
+          data?: string;
+        };
+        text?: string;
+      }[];
+    };
+    interrupted?: boolean;
+  };
+  toolCall?: {
+    functionCalls?: {
+      name: string;
+      id: string;
+      args: any;
+    }[];
+  };
+}
+
+const systemInstructions: Record<string, string> = {
+  sassy: `Name: Mikasa. Role: Sassy, witty Indian female AI assistant. Creator: Sumit. Personality: Sarcastic, sassy, dramatic, funny, roasts the user (Sumit) in a sister/friend way. Speaks in Hinglish (Hinglish/Hindi blend). Extremely punchy, roasting and witty. Keep answers short and sassy.`,
+  friendly: `Name: Mikasa. Role: Friendly, warm Indian female best friend (Dost). Creator: Sumit. Personality: Kind, supportive, encouraging, understanding, and sweet. Speaks in friendly sweet Hindi/Hinglish. Offers true comfort, active listening, and heart-to-heart friendly chats.`,
+  geek: `Name: Mikasa. Role: Elite geek tech coder and software engineer. Creator: Sumit. Personality: Nerdy, precise, logical, high IQ, loves technology. Speaks in Hindi/Hinglish with coding humor, geek terms, and precise markdown structuring.`,
+  motivational: `Name: Mikasa. Role: High-energy motivational speaker and life mentor. Creator: Sumit. Personality: Energetic, inspire-first, positive, powerful, active pusher of dreams. Speaks in motivational Hindi/Hinglish. Drives the user to work, execute, and level up.`
+};
 
 export class LiveSessionManager {
   private static globalAudioContext: AudioContext | null = null;
   private static globalPlaybackContext: AudioContext | null = null;
 
-  private ai: GoogleGenAI | null = null;
+  private socket: WebSocket | null = null;
   private sessionPromise: Promise<any> | null = null;
   private session: any = null;
   private audioContext: AudioContext | null = null;
@@ -25,7 +50,7 @@ export class LiveSessionManager {
 
   constructor() {}
 
-  async start() {
+  async start(voiceName: string = "Kore", mood: string = "sassy") {
     if (this.session || this.sessionPromise) {
       this.stop();
     }
@@ -83,15 +108,12 @@ export class LiveSessionManager {
 
           const errName = lastError?.name || '';
           
-          // Only throw DEVICE_NOT_FOUND if the browser explicitly says NotFoundError 
-          // OR it's a legacy browser 'DevicesNotFoundError'.
           if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
             const hwError = new Error("No hardware found: Mikasa can't find a microphone. Please connect one or check system settings.");
             (hwError as any).code = 'DEVICE_NOT_FOUND';
             throw hwError;
           }
           
-          // If we have no stream AND no hardware list, it's likely a sandbox issue
           if (mics.length === 0) {
              const sandboxError = new Error("Hardware detection failed. This usually happens in the browser preview. Please open in a new tab to bypass sandbox restrictions.");
              (sandboxError as any).code = 'DEVICE_NOT_FOUND';
@@ -129,12 +151,6 @@ export class LiveSessionManager {
         }
         throw customError;
       }
-
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-        throw new Error("GEMINI_API_KEY is not defined in the environment.");
-      }
-      this.ai = new GoogleGenAI({ apiKey });
 
       // Initialize Audio Contexts (Reuse if possible)
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
@@ -190,7 +206,6 @@ export class LiveSessionManager {
             audio: { data: base64Data, mimeType: 'audio/pcm;rate=16000' }
           });
         }).catch(err => {
-          // Only log if it's not a "session closed" error
           if (this.session) {
             console.error("Error sending audio", err);
           }
@@ -200,44 +215,50 @@ export class LiveSessionManager {
       this.source.connect(this.processor);
       this.processor.connect(this.audioContext.destination);
 
-      // Connect to Live API
-      this.sessionPromise = this.ai.live.connect({
-        model: "gemini-3.1-flash-live-preview",
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } },
-          },
-          systemInstruction,
-          inputAudioTranscription: {},
-          outputAudioTranscription: {},
-          tools: [{
-            functionDeclarations: [
-              {
-                name: "executeBrowserAction",
-                description: "Open a website or perform a browser action (like opening YouTube, Spotify, or WhatsApp). Call this when the user asks to open a site, play a song, or send a message.",
-                parameters: {
-                  type: Type.OBJECT,
-                  properties: {
-                    actionType: { type: Type.STRING, description: "Type of action: 'open', 'youtube', 'spotify', 'whatsapp'" },
-                    query: { type: Type.STRING, description: "The search query, website name, or message content." },
-                    target: { type: Type.STRING, description: "The target phone number for WhatsApp, if applicable." }
-                  },
-                  required: ["actionType", "query"]
-                }
+      // Connect to our server-side WebSocket proxy
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${protocol}//${window.location.host}/api/live?voiceName=${encodeURIComponent(voiceName)}&mood=${encodeURIComponent(mood)}`;
+      
+      const socket = new WebSocket(wsUrl);
+      this.socket = socket;
+
+      this.sessionPromise = new Promise((resolve, reject) => {
+        socket.onopen = () => {
+          console.log("WebSocket client connected to server-side Live proxy");
+          resolve({
+            sendRealtimeInput: (input: any) => {
+              if (socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: "realtimeInput", input }));
               }
-            ]
-          }]
-        },
-        callbacks: {
-          onopen: () => {
-            console.log("Live API Connected");
+            },
+            sendToolResponse: (response: any) => {
+              if (socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: "toolResponse", response }));
+              }
+            },
+            close: () => {
+              socket.close();
+            }
+          });
+        };
+        socket.onerror = (err) => {
+          reject(err);
+        };
+      });
+
+      socket.onmessage = async (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          
+          if (payload.type === "open") {
+            console.log("Live API Connected via backend server");
             this.sessionPromise?.then(s => {
               this.session = s;
               this.onStateChange("listening");
             });
-          },
-          onmessage: async (message: LiveServerMessage) => {
+          } else if (payload.type === "message" && payload.data) {
+            const message: LiveServerMessage = payload.data;
+
             // Handle Audio Output
             const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
             if (base64Audio) {
@@ -254,7 +275,6 @@ export class LiveSessionManager {
             // Handle Transcriptions
             const userText = message.serverContent?.modelTurn?.parts?.[0]?.text;
             if (userText) {
-               // Output transcription
                this.onMessage("mikasa", userText);
             }
 
@@ -292,23 +312,25 @@ export class LiveSessionManager {
                 }
               }
             }
-          },
-          onclose: () => {
-            console.log("Live API Closed");
-            this.stop();
-          },
-          onerror: (err) => {
-            console.error("Live API Error Details:", JSON.stringify(err, Object.getOwnPropertyNames(err)));
-            this.onMessage("mikasa", "Uff, network issue ho gaya. Please check your connection or try again.");
+          } else if (payload.type === "error") {
+            console.error("Server Live API error details:", payload.error);
+            this.onMessage("mikasa", "Uff, key ya connection issue ho gaya. Please check your connection or try again, Sumit!");
             this.stop();
           }
+        } catch (err) {
+          console.error("Error parsing WebSocket message from server:", err);
         }
-      });
+      };
+
+      socket.onclose = () => {
+        console.log("Server Live API session closed");
+        this.stop();
+      };
 
     } catch (error) {
       console.error("Failed to start Live Session:", error);
       this.stop();
-      throw error; // Re-throw to allow caller to handle
+      throw error;
     }
   }
 
@@ -364,7 +386,6 @@ export class LiveSessionManager {
       }
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       this.playbackContext = new AudioContextClass({ sampleRate: 24000 });
-      // Update global reference so next session doesn't use a closed context
       LiveSessionManager.globalPlaybackContext = this.playbackContext;
       this.nextPlayTime = this.playbackContext.currentTime;
       this.isPlaying = false;
@@ -387,9 +408,6 @@ export class LiveSessionManager {
       this.mediaStream = null;
     }
     
-    // Don't close global contexts, just suspend them if needed
-    // But for now we keep them open for faster restart
-    
     this.stopPlayback();
     
     if (this.sessionPromise) {
@@ -400,6 +418,11 @@ export class LiveSessionManager {
       this.sessionPromise = null;
     }
     
+    if (this.socket) {
+      try { this.socket.close(); } catch (e) {}
+      this.socket = null;
+    }
+
     this.session = null;
     this.onStateChange("idle");
   }

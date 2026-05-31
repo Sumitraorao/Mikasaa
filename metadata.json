@@ -2,7 +2,8 @@
   "name": "Remix: Mikasa AI Voice Assistant",
   "description": "A sassy, witty, and intelligent Indian female AI voice assistant created by Sumit.",
   "requestFramePermissions": [
-    "microphone"
+    "microphone",
+    "display-capture"
   ],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

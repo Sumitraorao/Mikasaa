@@ -30,3 +30,72 @@ export async function playPCM(base64Data: string): Promise<void> {
     console.error("Error playing audio:", error);
   }
 }
+
+export function playBrowserTTS(text: string): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (!window.speechSynthesis) {
+      console.warn("speechSynthesis not supported in this browser");
+      resolve();
+      return;
+    }
+    
+    try {
+      // Cancel any ongoing speaking
+      window.speechSynthesis.cancel();
+
+      // Remove markdown and code blocks for cleaner speech synthesis
+      const cleanText = text
+        .replace(/```[\s\S]*?```/g, "")
+        .replace(/\*\*|`|#|_/g, "")
+        .trim();
+
+      if (!cleanText) {
+        resolve();
+        return;
+      }
+
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      const voices = window.speechSynthesis.getVoices();
+      
+      // Look for Hindi or Indian English voices for beautiful Hinglish localization match
+      const isVoiceMatch = (v: SpeechSynthesisVoice) => 
+        v.lang.includes("IN") || 
+        v.lang.startsWith("hi") || 
+        v.lang.startsWith("en-IN") ||
+        v.name.toLowerCase().includes("india");
+
+      const localVoice = voices.find(isVoiceMatch);
+      if (localVoice) {
+        utterance.voice = localVoice;
+      }
+      
+      utterance.rate = 1.05;
+      utterance.pitch = 1.15; // Slightly charming high pitch for Indian female dost style matches
+
+      let hasResolved = false;
+      const done = () => {
+        if (!hasResolved) {
+          hasResolved = true;
+          resolve();
+        }
+      };
+
+      utterance.onend = done;
+      utterance.onerror = (e) => {
+        console.error("Browser speech synthesis error:", e);
+        done();
+      };
+
+      window.speechSynthesis.speak(utterance);
+
+      // Safari background tab safety timer auto-release
+      const wordCount = cleanText.split(/\s+/).length;
+      const safetyTime = (wordCount * 300) + 3000;
+      setTimeout(done, safetyTime);
+    } catch (e) {
+      console.error("Error running browser speech synthesis:", e);
+      resolve();
+    }
+  });
+}
+

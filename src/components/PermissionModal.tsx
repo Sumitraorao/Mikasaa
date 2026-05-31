@@ -36,6 +36,12 @@ export default function PermissionModal({ onClose, error, errorCode, onUseTextMo
           code: "IO_Constraint_Failure",
           desc: "Hardware unable to satisfy requested Mikasa core audio specifications (16kHz PCM)."
         };
+      case 'GEMINI_KEY_MISSING':
+        return {
+          title: "Gemini Key Required",
+          code: "GEMINI_API_KEY_Null",
+          desc: "Live Voice mode requires a Gemini Key. However, Groq Text & Image roasting is fully active!"
+        };
       default:
         return {
           title: "System Alert",
@@ -69,6 +75,24 @@ export default function PermissionModal({ onClose, error, errorCode, onUseTextMo
           <li className="flex gap-3">
             <span className="text-blue-400 font-mono">03</span>
             <span><b>Refresh Session:</b> Reload the page once permissions are granted.</span>
+          </li>
+        </ol>
+      );
+    }
+
+    if (errorCode === 'GEMINI_KEY_MISSING') {
+      return (
+        <ol className="text-xs text-white/80 space-y-3 font-sans">
+          <li className="flex gap-3 bg-violet-500/10 p-3 rounded-lg border border-violet-500/20 text-left">
+            <span className="text-violet-400 font-mono font-bold text-lg">01</span>
+            <div className="flex flex-col">
+              <span className="font-bold text-white">Use Type / Text Mode</span>
+              <span className="text-[11px] opacity-80">Groq is fully activated! Click "Type Mode me chat karein" below and speak or type directly with your custom keys.</span>
+            </div>
+          </li>
+          <li className="flex gap-3 text-left">
+            <span className="text-cyan-400 font-mono">02</span>
+            <span><b>Add Gemini Key:</b> To connect live WebSocket real-time audio streams, please add your `GEMINI_API_KEY` on your development environment.</span>
           </li>
         </ol>
       );
